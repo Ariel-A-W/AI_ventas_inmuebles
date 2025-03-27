@@ -51,3 +51,91 @@ En resumen, este es un modelo de regresión basado en árboles de decisión que 
 Este tipo de IA es ideal para predicciones en tiempo real sobre el valor de propiedades, lo cual es muy útil en aplicaciones inmobiliarias, aplicaciones de tasación y plataformas de análisis de bienes raíces.
 
 Puedes agregar este texto a tu blog y en tu repositorio de GitHub para explicar la lógica y la inteligencia detrás del algoritmo de predicción de precios de casas.
+
+# Código 
+
+El siguiente es el corazón operativo de esta aplicación. Analicemos entonces. 
+
+```C#
+    public CasasResponseDTO GetCasaPrediction(
+        CasasPredictionRequestDTO casa
+    )
+    {
+        var lstCasasData = _casas.GetAll();
+
+        var ubicacion = _localidades.GetById(casa.UbicacionId);
+
+        if (ubicacion == null)
+            return new CasasResponseDTO();
+
+        var vivienda = _tiposcasas.GetById(casa.TipoViviendaId);
+
+        if (vivienda == null)
+            return new CasasResponseDTO();
+
+        // Crear el contexto de ML
+        var mlContext = new MLContext();
+
+        // Cargar los datos
+        // var data = mlContext.Data.LoadFromTextFile<CasaData>("", hasHeader: true, separatorChar: ';');
+        var data = mlContext.Data.LoadFromEnumerable<CasaData>(lstCasasData);
+
+        // Dividir los datos en entrenamiento y prueba
+        var trainTestSplit = mlContext.Data.TrainTestSplit(data, testFraction: 0.2);
+        var trainingData = trainTestSplit.TrainSet;
+        var testData = trainTestSplit.TestSet;
+
+        // Construir el pipeline de entrenamiento
+        var pipeline = mlContext.Transforms.Categorical.OneHotEncoding("Ubicacion")
+            .Append(mlContext.Transforms.NormalizeMinMax("TamanioM2"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Habitaciones"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Banios"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Antiguedad"))
+            .Append(mlContext.Transforms.Concatenate("Features", "TamanioM2", "Habitaciones", "Banios", "Antiguedad", "Ubicacion"))
+            .Append(mlContext.Regression.Trainers.LightGbm(labelColumnName: "Precio", featureColumnName: "Features"));
+
+        // Entrenar el modelo
+        var model = pipeline.Fit(trainingData);
+
+        // Evaluar el modelo
+        var predictions = model.Transform(testData);
+        var metrics = mlContext.Regression.Evaluate(predictions, labelColumnName: "Precio");
+
+        // Realizar predicciones
+        var predictor = mlContext.Model.CreatePredictionEngine<CasaData, CasaResponseDTO>(model);
+        //var newHouse = new CasaData { Size = 120, Rooms = 4, Bathrooms = 2, Age = 5, Location = "Urban" };
+
+        var newHouse = new CasaData()
+        {
+            Ubicacion = ubicacion!.Ubicacion,
+            TamanioM2 = casa.TamanioM2,
+            Habitaciones = casa.Habitaciones,
+            Banios = casa.Banios,
+            TipoVivienda = vivienda!.Tipo,
+            Antiguedad = casa.Antiguedad
+        };
+
+        var prediction = predictor.Predict(newHouse);
+
+        return new CasasResponseDTO()
+        {
+            Ubicación = newHouse.Ubicacion,
+            TipoVivienda = newHouse.TipoVivienda,
+            TamanioM2 = newHouse.TamanioM2,
+            Habitaciones = Convert.ToInt32(newHouse.Habitaciones),
+            Banios = Convert.ToInt32(newHouse.Banios),
+            Antiguedad = Convert.ToInt32(newHouse.Antiguedad),
+            Precio = prediction.Precio
+        };
+    }
+```
+
+Como podemos ver estamos utilizando la librería ML de Microsoft. La función *LoadFromEnumerable<>()* es utilizada para cargar los datos desde el orígen de base de datos. En este caso es proporcionada por la función *GetAll()* que se encarga de hacer la consulta y traer todos los datos. En mi caso he hardcodeado estos datos en un archivo JSON donde se encuentran todos los datos. Convencionalmente este origen de datos suele ser una base de datos. Aquí lo he creado con JSON por cuestiones de practicidad y pedagógicas. 
+
+El siguiente paso es entonces pasar a dividir los procesos, tanto para el entrenamiento como la prueba de los datos. El proceso de división lo realiza la función *TrainTestSplit()*. A continuación, la variable *trainTestSplit* permite separar físicamente los datos haciendo uso de dos propiedades, *TrainSet* y *TestSet*. Por otro lado, ambas propiedades son asignadas a sus respectivas variables *traingingData* y *testData*. 
+
+El siguiente paso es crear un pipeline "*entubado*". El pipeline se encarga de hacer un agrupamiento de varios recursos para poder controlar todo el proceso. Desde crear una columna específica para el caso de la función *OneHotEncvoding()*, seguido luego *NormalizeMinMax()* que se encarga de normalizar valores entre ciertos mínimos y máximos. Luego tenemos un concatenador *Concatenate()* que añade cada uno de los campos importantes desde la fuente de orígenes de datos incluso un campo adicional que es el saliente. En este caso llamado como *Features*. Para finalizar, tenemos la función *LightGbm()*. Esta función precisamente se encarga entonces de predecir los sados saliente haciendo uso de un gradiente inicial que resulta clave para la toma decisiva del *modelo de árbol de regresión*.
+
+El siguiente paso es realizar el ajuste. Esta etapa es crucial. El ajuste evita que el producto del entrenamiento y prueba, no sufra un efecto de *Overfitting* sobreajustes y de *Underfitting* subjuste. Estos términos se refieren a la incapacidad de un modelo para generalizar, ya sea por aprender demasiado bien los datos de entrenamiento *sobreajuste* o por no capturar suficientes patrones *subajuste*. 
+
+La última etapa es la de las evaluaciones. En breve, la que nos arroja los resultados finales. La función *Evaluate()*, que no la usamos aquí, nos sirve precisamente para evaluar las métricas del algoritmo. Por otro lado, este si lo usamos aquí, es el valor de predicción saliente. Este proceso lo podemos obtener desde la función *CreatePredictionEngine()*. A su vez, esta función es asignada como un objeto hacia una variable llamada *predictor*. Gracias a esto objeto finalmente podremos utilizar la función *Predict()* que será la que ejecute el proceso para la predicción. Observa que esta función le pasa un arreglo donde pasaremos los valores de cada uno de los campos que son necesarios para la prediccióm. Son los campos de entrada que luego son pasados como argumentos para la función *Predict*. 
