@@ -1,0 +1,6 @@
+﻿@ventas_inmuebles.Server_HostAddress = http://localhost:5207
+
+GET {{ventas_inmuebles.Server_HostAddress}}/
+Accept: application/json
+
+###
